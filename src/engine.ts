@@ -155,6 +155,7 @@ export function readChallenge(hash: string): {
 }
 // Mutable engine consumes each input synchronously, avoiding stale React state during rapid typing.
 export class Run {
+  readonly id = crypto.randomUUID();
   readonly next: () => Problem;
   problem: Problem;
   input = "";
@@ -242,7 +243,7 @@ export class Run {
   result(now: number, completed: boolean): Session {
     const elapsed = this.elapsed(now);
     return {
-      id: crypto.randomUUID(),
+      id: this.id,
       settings: structuredClone(this.settings),
       seed: this.seed,
       startedAt: new Date(this.started).toISOString(),

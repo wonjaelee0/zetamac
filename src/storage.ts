@@ -89,3 +89,42 @@ export function mergeSessions(a: Session[], b: Session[]) {
     .sort((x, y) => Date.parse(y.startedAt) - Date.parse(x.startedAt))
     .slice(0, 500);
 }
+
+// A separate key per run keeps a new game from overwriting an interrupted one.
+export const DRAFT_PREFIX = "sums.draft.v1.";
+export function saveDraft(session: Session) {
+  localStorage.setItem(
+    DRAFT_PREFIX + session.id,
+    JSON.stringify({ ...session, completed: false }),
+  );
+}
+export function removeDraft(id: string) {
+  localStorage.removeItem(DRAFT_PREFIX + id);
+}
+export function loadDrafts(): Session[] {
+  const drafts: Session[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith(DRAFT_PREFIX)) continue;
+    try {
+      const value: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
+      if (validSession(value) && key === DRAFT_PREFIX + value.id)
+        drafts.push({ ...value, completed: false });
+    } catch {
+      /* A damaged draft must not hide the rest of the saved history. */
+    }
+  }
+  return drafts;
+}
+export function recoverDrafts(sessions: Session[], drafts: Session[]) {
+  const recovered = drafts.filter(
+    (d) =>
+      !sessions.some(
+        (s) => s.id === d.id && (s.completed || s.elapsedMs >= d.elapsedMs),
+      ),
+  );
+  return {
+    sessions: mergeSessions(recovered, sessions),
+    count: recovered.length,
+  };
+}

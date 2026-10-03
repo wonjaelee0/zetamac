@@ -38,7 +38,6 @@ import {
   reviewProblems,
   summary,
   validSettings,
-  type Op,
   type Problem,
   type Session,
   type Settings,
@@ -48,9 +47,19 @@ import {
   mergeSessions,
   parseData,
   saveData,
+  saveDraft,
+  removeDraft,
+  loadDrafts,
+  recoverDrafts,
   type Data,
 } from "./storage";
 import { ko } from "./copy";
+import {
+  loadPreferences,
+  savePreferences,
+  type Preferences,
+} from "./preferences";
+import { Analytics, OperationStats } from "./StatsPanel";
 
 type Screen = "home" | "countdown" | "play" | "result" | "history";
 type Theme = "system" | "light" | "dark";
@@ -73,8 +82,15 @@ function initial() {
   let warning = "";
   let data: Data = { v: 1, settings: structuredClone(DEFAULTS), sessions: [] };
   let theme: Theme = "system";
+  let recoveredCount = 0;
   try {
     data = loadData() ?? data;
+    const recovery = recoverDrafts(data.sessions, loadDrafts());
+    data = { ...data, sessions: recovery.sessions };
+    recoveredCount = recovery.count;
+    if (recoveredCount)
+      warning =
+        "중단된 게임을 기록에 보관했습니다. 최고 기록에서는 제외됩니다.";
     const t = localStorage.getItem("sums.theme");
     if (t === "light" || t === "dark") theme = t;
   } catch {
@@ -91,11 +107,12 @@ function initial() {
       history.replaceState(null, "", "#home");
     }
   }
-  return { data, warning, theme, challenge };
+  return { data, warning, theme, challenge, recoveredCount };
 }
 
 export default function App() {
   const [boot] = useState(initial);
+  const [preferences, setPreferences] = useState(loadPreferences);
   const [settings, setSettings] = useState(boot.data.settings);
   const [sessions, setSessions] = useState(boot.data.sessions);
   const [screen, setScreen] = useState<Screen>(
@@ -110,6 +127,7 @@ export default function App() {
     settings: Settings;
     seed: number;
     review?: Problem[];
+    countdown: boolean;
   } | null>(null);
   const [tick, setTick] = useState(0);
   const [shareText, setShareText] = useState("");
@@ -117,6 +135,15 @@ export default function App() {
   const dataRef = useRef<Data>(boot.data);
   const importRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const checkpoint = useCallback(() => {
+    const run = runRef.current;
+    if (!run) return;
+    try {
+      saveDraft(run.result(Date.now(), false));
+    } catch {
+      setNotice(ko.storageError);
+    }
+  }, []);
   const persist = useCallback((data: Data) => {
     dataRef.current = data;
     try {
@@ -127,6 +154,30 @@ export default function App() {
       return false;
     }
   }, []);
+  useEffect(() => {
+    if (boot.recoveredCount && persist(boot.data)) {
+      try {
+        for (const draft of loadDrafts()) {
+          if (
+            boot.data.sessions.some(
+              (s) => s.id === draft.id && s.elapsedMs >= draft.elapsedMs,
+            )
+          )
+            removeDraft(draft.id);
+        }
+      } catch {
+        /* The merged history remains safe if draft cleanup fails. */
+      }
+    }
+  }, [boot, persist]);
+  const updatePreferences = (next: Preferences) => {
+    setPreferences(next);
+    try {
+      savePreferences(next);
+    } catch {
+      setNotice("플레이 옵션을 저장하지 못했습니다.");
+    }
+  };
   const updateSettings = (next: Settings) => {
     setSettings(next);
     setChallenge(null);
@@ -150,7 +201,19 @@ export default function App() {
       const item = run.result(Date.now(), completed);
       const merged = mergeSessions([item], dataRef.current.sessions);
       setSessions(merged);
-      persist({ ...dataRef.current, sessions: merged });
+      if (persist({ ...dataRef.current, sessions: merged })) {
+        try {
+          removeDraft(item.id);
+        } catch {
+          /* Saved session takes precedence on recovery. */
+        }
+      } else {
+        try {
+          saveDraft(item);
+        } catch {
+          /* The in-memory result can still be exported. */
+        }
+      }
       setResult(item);
       route("result", true);
     },
@@ -203,6 +266,24 @@ export default function App() {
   }, [finish, route]);
   useEffect(() => {
     if (!pending) return;
+    const launch = () => {
+      const run = new Run(
+        pending.settings,
+        pending.seed,
+        Date.now(),
+        pending.review,
+      );
+      if (document.hidden) run.pause(Date.now());
+      runRef.current = run;
+      checkpoint();
+      setPending(null);
+      setScreen("play");
+      setTick((t) => t + 1);
+    };
+    if (!pending.countdown) {
+      launch();
+      return;
+    }
     const deadline = Date.now() + 3000;
     setCount(3);
     const timer = window.setInterval(() => {
@@ -212,20 +293,10 @@ export default function App() {
         return;
       }
       clearInterval(timer);
-      const run = new Run(
-        pending.settings,
-        pending.seed,
-        Date.now(),
-        pending.review,
-      );
-      if (document.hidden) run.pause(Date.now());
-      runRef.current = run;
-      setPending(null);
-      setScreen("play");
-      setTick((t) => t + 1);
+      launch();
     }, 50);
     return () => clearInterval(timer);
-  }, [pending]);
+  }, [pending, checkpoint]);
   useEffect(() => {
     if (screen !== "play") return;
     const interval = window.setInterval(() => {
@@ -233,6 +304,8 @@ export default function App() {
       if (run?.expired(Date.now())) finish(true);
       else setTick((t) => t + 1);
     }, 80);
+    const autosave = window.setInterval(checkpoint, 1000);
+    window.addEventListener("pagehide", checkpoint);
     const visibility = () => {
       const r = runRef.current;
       if (!r) return;
@@ -241,23 +314,28 @@ export default function App() {
         r.resume(Date.now());
         if (r.expired(Date.now())) finish(true);
       }
+      checkpoint();
       setTick((t) => t + 1);
     };
     document.addEventListener("visibilitychange", visibility);
     return () => {
       clearInterval(interval);
+      clearInterval(autosave);
+      window.removeEventListener("pagehide", checkpoint);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [screen, finish]);
+  }, [screen, finish, checkpoint]);
   const enter = useCallback(
     (key: string) => {
       const r = runRef.current;
       if (!r) return;
+      const previousScore = r.score;
       r.key(key, Date.now());
+      if (r.score !== previousScore) checkpoint();
       if (r.done) finish(true);
       else setTick((t) => t + 1);
     },
-    [finish],
+    [finish, checkpoint],
   );
   useEffect(() => {
     if (screen !== "play") return;
@@ -287,13 +365,54 @@ export default function App() {
     setNotice("");
     setShareText("");
     if (!review) persist({ ...dataRef.current, settings: selected });
-    setPending({ settings: structuredClone(selected), seed, review });
+    setPending({
+      settings: structuredClone(selected),
+      seed,
+      review,
+      countdown: preferences.countdown,
+    });
     route("countdown");
   };
+  const restart = () => {
+    if (!result) return;
+    setSettings(result.settings);
+    setChallenge(null);
+    start(undefined, {
+      ...result,
+      seed: crypto.getRandomValues(new Uint32Array(1))[0],
+    });
+  };
+  useEffect(() => {
+    if (screen !== "result" || !result) return;
+    const handle = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Enter" ||
+        event.repeat ||
+        event.isComposing ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey
+      )
+        return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest(
+          'button, a, input, select, textarea, summary, [contenteditable="true"]',
+        )
+      )
+        return;
+      event.preventDefault();
+      restart();
+    };
+    window.addEventListener("keydown", handle);
+    return () => window.removeEventListener("keydown", handle);
+  });
   const skip = () => {
     const run = runRef.current;
     if (!run) return;
     run.advance(Date.now(), true);
+    checkpoint();
     if (run.done) finish(true);
     else setTick((t) => t + 1);
   };
@@ -377,46 +496,50 @@ export default function App() {
   const playing = screen === "play" || screen === "countdown";
   return (
     <div className={"app " + (playing ? "in-game" : "")}>
-      <header className="site-header">
-        <div className="header-inner">
-          <button
-            className="brand"
-            onClick={() => navigate("home")}
-            aria-label="sums 홈"
-          >
-            <span className="brand-mark">±</span>
-            <span>
-              sums<span className="brand-dot">.</span>
-            </span>
-          </button>
-          <nav aria-label="주 메뉴">
+      {!playing && (
+        <header className="site-header">
+          <div className="header-inner">
             <button
-              className={
-                screen === "home" || playing ? "nav-link active" : "nav-link"
-              }
+              className="brand"
               onClick={() => navigate("home")}
+              aria-label="sums 홈"
             >
-              <Zap size={16} />
-              {ko.training}
+              <span className="brand-mark">±</span>
+              <span>
+                sums<span className="brand-dot">.</span>
+              </span>
             </button>
+            <nav aria-label="주 메뉴">
+              <button
+                className={
+                  screen === "home" || playing ? "nav-link active" : "nav-link"
+                }
+                onClick={() => navigate("home")}
+              >
+                <Zap size={16} />
+                {ko.training}
+              </button>
+              <button
+                className={
+                  screen === "history" ? "nav-link active" : "nav-link"
+                }
+                onClick={() => navigate("history")}
+              >
+                <BarChart3 size={16} />
+                {ko.history}
+              </button>
+            </nav>
             <button
-              className={screen === "history" ? "nav-link active" : "nav-link"}
-              onClick={() => navigate("history")}
+              className="icon-button theme-button"
+              onClick={switchTheme}
+              aria-label="밝은 테마 / 어두운 테마 전환"
             >
-              <BarChart3 size={16} />
-              {ko.history}
+              <Sun className="sun-icon" size={19} />
+              <Moon className="moon-icon" size={19} />
             </button>
-          </nav>
-          <button
-            className="icon-button theme-button"
-            onClick={switchTheme}
-            aria-label="밝은 테마 / 어두운 테마 전환"
-          >
-            <Sun className="sun-icon" size={19} />
-            <Moon className="moon-icon" size={19} />
-          </button>
-        </div>
-      </header>
+          </div>
+        </header>
+      )}
       {notice && (
         <div className="notice" role="status">
           <span>{notice}</span>
@@ -642,6 +765,45 @@ export default function App() {
                     </p>
                   </div>
                 </details>
+                <details className="play-options">
+                  <summary>
+                    <Settings2 size={17} />
+                    플레이 옵션
+                    <ChevronDown size={14} />
+                  </summary>
+                  <label>
+                    <span>
+                      <strong>정답 피드백</strong>
+                      <small>정답일 때 짧은 체크 표시와 색상 반응</small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={preferences.feedback}
+                      onChange={(e) =>
+                        updatePreferences({
+                          ...preferences,
+                          feedback: e.target.checked,
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>
+                      <strong>시작 전 3초 카운트다운</strong>
+                      <small>끄면 바로 플레이를 시작합니다</small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={preferences.countdown}
+                      onChange={(e) =>
+                        updatePreferences({
+                          ...preferences,
+                          countdown: e.target.checked,
+                        })
+                      }
+                    />
+                  </label>
+                </details>
                 {!validSettings(settings) && (
                   <p className="validation" role="alert">
                     연산을 하나 이상 선택하고 올바른 숫자 범위를 입력해 주세요.
@@ -834,7 +996,14 @@ export default function App() {
               </div>
               <div>
                 <span>{run.review ? "복습 진행" : "정답 수"}</span>
-                <strong>
+                <strong
+                  key={run.score}
+                  className={
+                    preferences.feedback && run.score > 0
+                      ? "score-feedback"
+                      : ""
+                  }
+                >
                   {run.review
                     ? `${run.reviewIndex} / ${run.review.length}`
                     : run.score}
@@ -889,6 +1058,16 @@ export default function App() {
                     )}
                   </span>
                   <i />
+                  {preferences.feedback && run.score > 0 && (
+                    <span
+                      key={run.score}
+                      className="correct-flash"
+                      aria-hidden="true"
+                      data-testid="correct-feedback"
+                    >
+                      <Check size={20} />
+                    </span>
+                  )}
                 </div>
                 <button className="skip-button" onClick={skip}>
                   건너뛰기 <SkipForward size={16} />
@@ -1019,17 +1198,7 @@ export default function App() {
               </div>
             )}
             <div className="result-actions">
-              <button
-                className="primary"
-                onClick={() => {
-                  setSettings(result.settings);
-                  setChallenge(null);
-                  start(undefined, {
-                    ...result,
-                    seed: crypto.getRandomValues(new Uint32Array(1))[0],
-                  });
-                }}
-              >
+              <button className="primary" onClick={restart}>
                 <RotateCcw size={17} />
                 다시 연습하기
               </button>
@@ -1048,6 +1217,9 @@ export default function App() {
                 </button>
               )}
             </div>
+            <p className="restart-hint">
+              <Keyboard size={15} /> Enter로 같은 설정의 새 게임 시작
+            </p>
             <OperationStats sessions={[result]} />
             <section className="card review-list">
               <div className="section-heading">
@@ -1118,8 +1290,7 @@ export default function App() {
                 icon={<TrendingUp size={18} />}
               />
             </div>
-            <HistoryChart sessions={sessions} />
-            <OperationStats sessions={sessions} />
+            <Analytics sessions={sessions} />
             <section className="card records-card">
               <div className="section-heading">
                 <h2>
@@ -1148,7 +1319,13 @@ export default function App() {
                         )
                       ) {
                         setSessions([]);
-                        persist({ ...dataRef.current, sessions: [] });
+                        if (persist({ ...dataRef.current, sessions: [] })) {
+                          try {
+                            loadDrafts().forEach((d) => removeDraft(d.id));
+                          } catch {
+                            setNotice("일부 임시 기록을 삭제하지 못했습니다.");
+                          }
+                        }
                       }
                     }}
                   >
@@ -1296,168 +1473,5 @@ function SessionList({
         </button>
       ))}
     </div>
-  );
-}
-function OperationStats({ sessions }: { sessions: Session[] }) {
-  const attempts = sessions.flatMap((s) => s.attempts);
-  const values = OPS.map((op) => {
-    const all = attempts.filter((a) => a.problem.op === op);
-    const correct = all.filter((a) => !a.skipped);
-    return {
-      op,
-      count: correct.length,
-      skipped: all.length - correct.length,
-      mean: correct.length
-        ? correct.reduce((n, a) => n + a.ms, 0) / correct.length
-        : 0,
-    };
-  });
-  const max = Math.max(1, ...values.map((v) => v.mean));
-  return (
-    <section className="card operation-stats">
-      <div className="section-heading">
-        <h2>연산별 페이스</h2>
-        <span className="muted">정답 문제의 평균 풀이 시간</span>
-      </div>
-      <div className="op-stat-grid">
-        {values.map((v) => (
-          <div className="op-stat" key={v.op}>
-            <div>
-              <span className="op-stat-symbol">{v.op}</span>
-              <span>{ko.operations[v.op]}</span>
-              <strong>
-                {v.count ? seconds(v.mean) : "—"}
-                <small> 초</small>
-              </strong>
-            </div>
-            <div className="stat-track">
-              <span
-                style={{
-                  width: v.count
-                    ? `${Math.max(3, (v.mean / max) * 100)}%`
-                    : "0%",
-                }}
-              />
-            </div>
-            <p>
-              정답 {v.count}개 · 건너뜀 {v.skipped}개
-            </p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-function HistoryChart({ sessions }: { sessions: Session[] }) {
-  const eligible = sessions.filter((s) => s.kind === "timed" && s.completed);
-  const configs = [
-    ...new Map(
-      eligible.map((s) => [configKey(s.settings), s.settings]),
-    ).entries(),
-  ];
-  const [selected, setSelected] = useState("");
-  const key = configs.some(([k]) => k === selected)
-    ? selected
-    : configs[0]?.[0];
-  const daily = new Map<string, number>();
-  for (const s of eligible
-    .filter((s) => configKey(s.settings) === key)
-    .reverse()) {
-    const d = new Intl.DateTimeFormat("sv-SE").format(new Date(s.startedAt));
-    daily.set(d, Math.max(daily.get(d) ?? 0, s.score));
-  }
-  const points = [...daily.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-14);
-  const max = Math.max(10, ...points.map(([, v]) => v));
-  const x = (i: number) =>
-    50 + (points.length === 1 ? 290 : (i * 580) / (points.length - 1));
-  const y = (v: number) => 170 - (v / max) * 135;
-  const path = points
-    .map(([, v], i) => `${i ? "L" : "M"} ${x(i)} ${y(v)}`)
-    .join(" ");
-  return (
-    <section className="card chart-card">
-      <div className="section-heading">
-        <div>
-          <h2>꾸준함의 궤적</h2>
-          <p className="muted">
-            같은 설정의 날짜별 최고 점수 · 최근 14개 연습일
-          </p>
-        </div>
-        {configs.length > 0 && (
-          <select
-            aria-label="기록 그래프 설정 선택"
-            value={key}
-            onChange={(e) => setSelected(e.target.value)}
-          >
-            {configs.map(([k, s]) => (
-              <option key={k} value={k}>
-                {s.duration}초 · {s.ops.join(" ")} · 덧셈{" "}
-                {s.add.map((r) => r.join("–")).join("/")} · 곱셈{" "}
-                {s.multiply.map((r) => r.join("–")).join("/")}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-      {points.length ? (
-        <>
-          <svg
-            viewBox="0 0 680 215"
-            role="img"
-            aria-label="날짜별 최고 점수 그래프"
-          >
-            {[0, 0.5, 1].map((r) => (
-              <g key={r}>
-                <line
-                  x1="50"
-                  x2="640"
-                  y1={y(max * r)}
-                  y2={y(max * r)}
-                  className="chart-grid"
-                />
-                <text x="32" y={y(max * r) + 4} textAnchor="end">
-                  {Math.round(max * r)}
-                </text>
-              </g>
-            ))}
-            {points.length > 1 && (
-              <path
-                d={path + ` L ${x(points.length - 1)} 170 L ${x(0)} 170 Z`}
-                className="chart-area"
-              />
-            )}
-            <path d={path} className="chart-line" />
-            {points.map(([d, v], i) => (
-              <g key={d}>
-                <circle cx={x(i)} cy={y(v)} r="4" className="chart-point">
-                  <title>
-                    {d}: {v}문제
-                  </title>
-                </circle>
-                {(i === 0 || i === points.length - 1 || points.length <= 7) && (
-                  <text x={x(i)} y="199" textAnchor="middle">
-                    {d.slice(5).replace("-", ".")}
-                  </text>
-                )}
-              </g>
-            ))}
-          </svg>
-          <div className="sr-only">
-            {points.map(([d, v]) => (
-              <p key={d}>
-                {d}: {v}문제
-              </p>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div className="chart-empty">
-          <TrendingUp size={28} />
-          <p>시간제 게임을 완료하면 성장 그래프가 시작됩니다.</p>
-        </div>
-      )}
-    </section>
   );
 }

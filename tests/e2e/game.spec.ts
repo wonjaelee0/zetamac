@@ -209,3 +209,258 @@ test("keeps playing if browser storage is unavailable", async ({ page }) => {
     page.getByRole("heading", { name: "좋은 집중이었어요." }),
   ).toBeVisible();
 });
+
+test("focus mode, optional feedback and immediate Enter restart", async ({
+  page,
+  isMobile,
+}) => {
+  await setup(page);
+  await page.getByText("플레이 옵션", { exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: "시작 전 3초 카운트다운" })
+    .uncheck();
+  await page.getByRole("button", { name: "30초", exact: true }).click();
+  await page.getByRole("button", { name: "바로 시작", exact: true }).click();
+  await expect(page.getByTestId("equation")).toBeVisible();
+  await expect(page.getByRole("navigation")).toHaveCount(0);
+  await solve(page, isMobile);
+  await expect(page.getByTestId("correct-feedback")).toHaveCount(1);
+  const before = await page.evaluate(() =>
+    JSON.parse(
+      localStorage.getItem(
+        Object.keys(localStorage).find((k) => k.startsWith("sums.draft.v1."))!,
+      )!,
+    ),
+  );
+  await page.clock.fastForward(31000);
+  await expect(
+    page.getByRole("heading", { name: "좋은 집중이었어요." }),
+  ).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("equation")).toBeVisible();
+  const after = await page.evaluate(() =>
+    JSON.parse(
+      localStorage.getItem(
+        Object.keys(localStorage).find((k) => k.startsWith("sums.draft.v1."))!,
+      )!,
+    ),
+  );
+  expect(after.settings).toEqual(before.settings);
+  expect(after.id).not.toBe(before.id);
+  await page.clock.fastForward(31000);
+  await page.getByRole("button", { name: "연습으로 돌아가기" }).click();
+  await page.getByText("플레이 옵션", { exact: true }).click();
+  await page.getByRole("checkbox", { name: "정답 피드백" }).uncheck();
+  await page.reload();
+  await page.getByText("플레이 옵션", { exact: true }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "정답 피드백" }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: "시작 전 3초 카운트다운" }),
+  ).not.toBeChecked();
+  await page.getByRole("button", { name: "바로 시작", exact: true }).click();
+  await solve(page, isMobile);
+  await expect(page.getByTestId("correct-feedback")).toHaveCount(0);
+});
+
+test("recovers interrupted play once and excludes it from statistics", async ({
+  page,
+  isMobile,
+}) => {
+  await setup(page);
+  await start(page);
+  await solve(page, isMobile);
+  await page.reload();
+  await expect(
+    page.getByText("중단된 게임을 기록에 보관했습니다.", { exact: false }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "나의 기록", exact: true }).click();
+  await expect(page.locator(".session-row")).toHaveCount(1);
+  await expect(page.locator(".session-row")).toContainText("중도 종료");
+  await expect(
+    page.getByText("선택한 조건의 완료 기록 0회", { exact: false }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.locator(".session-row")).toHaveCount(1);
+  page.on("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "전체 삭제" }).click();
+  await page.reload();
+  await expect(page.locator(".session-row")).toHaveCount(0);
+});
+
+test("keyboard restart respects focused controls and reduced motion", async ({
+  page,
+  isMobile,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await setup(page);
+  await page.getByRole("button", { name: "30초", exact: true }).click();
+  await start(page);
+  await solve(page, isMobile);
+  await expect(page.getByTestId("correct-feedback")).toBeHidden();
+  await page.clock.fastForward(31000);
+  const share = page.getByRole("button", { name: "도전 공유", exact: true });
+  await share.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("textbox", { name: "공유할 도전 링크" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "좋은 집중이었어요." }),
+  ).toBeVisible();
+});
+
+test("small portrait and landscape keep controls reachable with large numbers", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await setup(page);
+  await page.getByText("숫자 범위 설정", { exact: true }).click();
+  for (const name of [
+    "덧셈 1번째 수 최댓값",
+    "덧셈 2번째 수 최댓값",
+    "곱셈 1번째 수 최댓값",
+    "곱셈 2번째 수 최댓값",
+  ])
+    await page.getByRole("spinbutton", { name }).fill("999");
+  for (const name of [
+    "덧셈 1번째 수 최솟값",
+    "덧셈 2번째 수 최솟값",
+    "곱셈 1번째 수 최솟값",
+    "곱셈 2번째 수 최솟값",
+  ])
+    await page.getByRole("spinbutton", { name }).fill("999");
+  await start(page);
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 667, height: 375 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const pad = await page.locator(".number-pad").boundingBox();
+    const skip = await page
+      .getByRole("button", { name: "건너뛰기", exact: true })
+      .boundingBox();
+    expect(pad!.y + pad!.height).toBeLessThanOrEqual(viewport.height);
+    expect(skip!.y + skip!.height).toBeLessThanOrEqual(viewport.height);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    for (const button of await page.locator(".number-pad button").all()) {
+      const bounds = await button.boundingBox();
+      expect(bounds!.height).toBeGreaterThanOrEqual(48);
+      expect(bounds!.width).toBeGreaterThanOrEqual(48);
+    }
+  }
+});
+
+test("statistics filter mode, conditions and period without mixing review records", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const settings = {
+      mode: "timed",
+      duration: 120,
+      ops: ["+"],
+      add: [
+        [2, 100],
+        [2, 100],
+      ],
+      multiply: [
+        [2, 12],
+        [2, 100],
+      ],
+    };
+    const make = (id: string, ms: number, changes: object = {}) => ({
+      id,
+      settings,
+      seed: 1,
+      startedAt: new Date().toISOString(),
+      elapsedMs: 120000,
+      score: 1,
+      attempts: [
+        { problem: { a: 2, b: 3, op: "+", answer: 5 }, ms, skipped: false },
+      ],
+      kind: "timed",
+      completed: true,
+      ...changes,
+    });
+    localStorage.setItem(
+      "sums.data.v1",
+      JSON.stringify({
+        v: 1,
+        settings,
+        sessions: [
+          make("one", 1000),
+          make("two", 3000),
+          make("review", 10000, { kind: "review" }),
+          make("range", 20000, {
+            settings: {
+              ...settings,
+              add: [
+                [2, 9],
+                [2, 9],
+              ],
+            },
+          }),
+          make("old", 30000, {
+            startedAt: new Date(Date.now() - 60 * 86400000).toISOString(),
+          }),
+          make("interrupted", 40000, { completed: false }),
+        ],
+      }),
+    );
+  });
+  await page.goto("/#history");
+  await page
+    .getByRole("combobox", { name: "기간", exact: true })
+    .selectOption("7");
+  await expect(
+    page.getByText("선택한 조건의 완료 기록 2회", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByTestId("stat-+")).toContainText("중앙값 2.0초");
+  await page
+    .getByRole("combobox", { name: "게임 종류", exact: true })
+    .selectOption("review");
+  await expect(
+    page.getByText("선택한 조건의 완료 기록 1회", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByTestId("stat-+")).toContainText("중앙값 10.0초");
+  await page
+    .getByRole("combobox", { name: "게임 종류", exact: true })
+    .selectOption("timed");
+  await page
+    .getByRole("combobox", { name: "비교할 설정", exact: true })
+    .selectOption({ index: 1 });
+  await expect(page.getByTestId("stat-+")).toContainText("중앙값 20.0초");
+  await page
+    .getByRole("combobox", { name: "비교할 설정", exact: true })
+    .selectOption({ index: 0 });
+  await page
+    .getByRole("combobox", { name: "기간", exact: true })
+    .selectOption("all");
+  await expect(
+    page.getByText("선택한 조건의 완료 기록 3회", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByTestId("stat-+")).toContainText("중앙값 3.0초");
+});
+
+test("closing and reopening a tab retains the last answered problem", async ({
+  page,
+  context,
+  isMobile,
+}) => {
+  await setup(page);
+  await start(page);
+  await solve(page, isMobile);
+  await page.close();
+  const reopened = await context.newPage();
+  await reopened.goto("/#history");
+  await expect(reopened.locator(".session-row")).toHaveCount(1);
+  await expect(reopened.locator(".session-row")).toContainText("중도 종료");
+  await expect(reopened.locator(".session-score")).toHaveText("1 문제");
+  await reopened.reload();
+  await expect(reopened.locator(".session-row")).toHaveCount(1);
+});

@@ -2285,3 +2285,333 @@ footer a {
     margin-top: 12px;
   }
 }
+
+/* Focused play: the equation keeps its place while feedback appears around it. */
+.in-game main {
+  padding-top: max(16px, env(safe-area-inset-top));
+}
+.in-game .play-shell {
+  margin-top: 8px;
+}
+.answer-box {
+  position: relative;
+}
+.correct-flash {
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--accent);
+  border-radius: 13px;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 13px;
+  pointer-events: none;
+  opacity: 0;
+  animation: correct-flash 230ms ease-out;
+}
+.score-feedback {
+  animation: score-feedback 230ms ease-out;
+}
+@keyframes correct-flash {
+  from {
+    opacity: 1;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  to {
+    opacity: 0;
+    background: transparent;
+  }
+}
+@keyframes score-feedback {
+  from {
+    color: var(--accent);
+  }
+  to {
+    color: var(--ink);
+  }
+}
+.play-options {
+  border-top: 1px solid var(--line);
+  margin-bottom: 14px;
+}
+.play-options summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.play-options summary::-webkit-details-marker {
+  display: none;
+}
+.play-options summary > svg:last-child {
+  margin-left: auto;
+  color: var(--muted);
+}
+.play-options label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 64px;
+  padding: 8px 0;
+  cursor: pointer;
+}
+.play-options label > span {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.play-options strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.play-options small {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.play-options input {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.restart-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  margin: -20px 0 25px;
+}
+.analytics-filters {
+  padding: 25px;
+  margin-top: 24px;
+}
+.filter-grid {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) 140px;
+  gap: 14px;
+  margin-top: 23px;
+}
+.filter-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.filter-grid select {
+  min-width: 0;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--soft);
+  text-overflow: ellipsis;
+}
+.filter-caption {
+  font-size: 13px;
+  color: var(--accent);
+  margin-top: 20px;
+}
+.filter-note,
+.stats-note {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin-top: 10px;
+}
+.stats-note {
+  margin-top: 23px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.op-stat .median-stat {
+  font-size: 12px;
+  margin-bottom: 8px;
+  line-height: 1.7;
+}
+.op-stat .median-stat strong {
+  font-size: inherit;
+  font-weight: 500;
+  color: var(--ink);
+}
+.op-stat-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 26px 32px;
+}
+.op-stat p {
+  font-size: 12px;
+}
+/* Secondary copy remains readable on small displays. */
+.hero p,
+.personal-card > p,
+.tip-card p {
+  font-size: 13px;
+}
+.setting-label > span,
+.setup-foot,
+.setup-foot .text-button,
+.range-details summary,
+.range-details summary > span + span,
+.ranges > p,
+.empty-recent p,
+.storage-note,
+.session-title small,
+.session-title strong > span,
+.session-score small,
+.muted,
+.section-heading > .muted,
+.keyboard-hint {
+  font-size: 12px;
+}
+.operation,
+.mini-stat,
+.aside-link,
+.empty-recent strong {
+  font-size: 13px;
+}
+:root {
+  --muted: #64776c;
+}
+:root[data-theme="dark"] {
+  --muted: #a2b4a9;
+}
+.hero p {
+  color: var(--muted);
+}
+.tip-card p {
+  color: #5d7053;
+}
+[data-theme="dark"] .tip-card p {
+  color: #a4b797;
+}
+@media (max-width: 640px) {
+  .hero p {
+    font-size: 13px;
+  }
+  .setting-label {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .setup-foot {
+    flex-wrap: wrap;
+  }
+  .setup-foot > span {
+    line-height: 1.7;
+  }
+  .tip-card p {
+    font-size: 12px;
+  }
+  .personal-card > p {
+    font-size: 12px;
+  }
+  .mini-stat {
+    font-size: 11px;
+  }
+  .aside-link {
+    font-size: 11px;
+  }
+  .empty-recent p {
+    font-size: 12px;
+  }
+  .session-title strong {
+    font-size: 12px;
+  }
+  .session-title strong > span {
+    font-size: 10px;
+  }
+  .session-title small {
+    font-size: 11px;
+  }
+  .analytics-filters {
+    padding: 21px 17px;
+  }
+  .analytics-filters .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .filter-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .filter-grid label:nth-child(2) {
+    grid-column: 1/-1;
+    grid-row: 2;
+  }
+  .op-stat-grid {
+    gap: 24px 16px;
+  }
+  .op-stat .median-stat {
+    font-size: 11px;
+  }
+  .op-stat p {
+    font-size: 11px;
+  }
+  .restart-hint {
+    font-size: 11px;
+    margin-top: -8px;
+  }
+  .in-game main {
+    min-height: 100dvh;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  .in-game .play-shell {
+    margin-top: 0;
+  }
+  .in-game .play-body {
+    gap: 12px;
+  }
+  .in-game .number-pad {
+    margin-top: auto;
+    padding-top: 8px;
+    flex-shrink: 0;
+  }
+  .number-pad button {
+    touch-action: manipulation;
+  }
+}
+@media (max-width: 360px) {
+  .home-aside {
+    grid-template-columns: 1fr;
+  }
+  .tip-card br {
+    display: none;
+  }
+  .correct-flash {
+    padding-right: 8px;
+  }
+}
+@media (orientation: landscape) and (max-height: 600px) {
+  .in-game main {
+    min-height: 100dvh;
+    padding-top: max(8px, env(safe-area-inset-top));
+  }
+  .in-game .play-body {
+    gap: 24px;
+  }
+  .in-game .number-pad {
+    margin-top: 12px;
+    padding-top: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .correct-flash {
+    animation: none;
+    display: none;
+  }
+  .score-feedback {
+    animation: none;
+  }
+}
