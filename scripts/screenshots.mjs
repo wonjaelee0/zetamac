@@ -1,0 +1,16 @@
+import { chromium, devices } from '@playwright/test';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 1200 }, deviceScaleFactor: 1 });
+await page.goto('http://127.0.0.1:5173');
+await page.evaluate(() => document.fonts.ready);
+await page.screenshot({ path: '/private/tmp/sums-desktop.png', fullPage: true });
+const mobile = await browser.newPage({ ...devices['iPhone 13'] });
+await mobile.goto('http://127.0.0.1:5173');
+await mobile.evaluate(() => document.fonts.ready);
+await mobile.screenshot({ path: '/private/tmp/sums-mobile.png', fullPage: true });
+await mobile.getByRole('button', { name: '바로 시작', exact: true }).click();
+await mobile.getByTestId('equation').waitFor();
+await mobile.screenshot({ path: '/private/tmp/sums-play.png', fullPage: true });
+await page.getByRole('button', { name: '밝은 테마 / 어두운 테마 전환' }).click();
+await page.screenshot({ path: '/private/tmp/sums-dark.png', fullPage: true });
+await browser.close();
