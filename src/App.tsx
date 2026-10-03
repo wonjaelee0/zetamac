@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -238,7 +244,7 @@ export default function App() {
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
   }, [theme]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (screen !== "play" && screen !== "countdown")
       headingRef.current?.focus();
   }, [screen]);
@@ -382,7 +388,7 @@ export default function App() {
       seed: crypto.getRandomValues(new Uint32Array(1))[0],
     });
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (screen !== "result" || !result) return;
     const handle = (event: KeyboardEvent) => {
       if (
